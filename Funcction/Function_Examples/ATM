@@ -1,0 +1,16 @@
+def withdraw(balance, amount):
+    if amount <= 0:
+        return "Invalid amount"
+
+    elif amount > balance:
+        return "Insufficient balance"
+
+    else:
+        balance = balance - amount
+        return balance
+
+
+balance = 5000
+amount = float(input("Enter withdrawal amount: "))
+result = withdraw(balance, amount)
+print("Result:", result)
