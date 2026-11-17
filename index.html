@@ -1,0 +1,466 @@
+
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Arduino LDR Monitor</title>
+
+<style>
+* {
+    box-sizing: border-box;
+}
+
+body {
+    margin: 0;
+    padding: 20px;
+    font-family: Arial, sans-serif;
+    background: #0b1220;
+    color: white;
+}
+
+.container {
+    max-width: 1100px;
+    margin: auto;
+}
+
+h1 {
+    color: #55d7e8;
+}
+
+button {
+    padding: 12px 18px;
+    border: none;
+    border-radius: 8px;
+    cursor: pointer;
+    font-weight: bold;
+    margin: 5px;
+}
+
+.connect {
+    background: #55d7e8;
+    color: #071522;
+}
+
+.clear {
+    background: #e74c3c;
+    color: white;
+}
+
+.card-container {
+    display: grid;
+    grid-template-columns: repeat(3, 1fr);
+    gap: 15px;
+    margin: 20px 0;
+}
+
+.card {
+    background: #17243a;
+    padding: 22px;
+    border-radius: 12px;
+    border: 1px solid #293a55;
+}
+
+.card h3 {
+    color: #9aabc4;
+    font-size: 14px;
+}
+
+.value {
+    font-size: 32px;
+    font-weight: bold;
+    color: #55d7e8;
+}
+
+.panel {
+    background: #17243a;
+    padding: 20px;
+    border-radius: 12px;
+    margin-bottom: 20px;
+    border: 1px solid #293a55;
+}
+
+canvas {
+    width: 100%;
+    height: 250px;
+}
+
+table {
+    width: 100%;
+    border-collapse: collapse;
+}
+
+th, td {
+    padding: 12px;
+    text-align: center;
+    border-bottom: 1px solid #394a60;
+}
+
+th {
+    color: #55d7e8;
+}
+
+.history {
+    overflow-x: auto;
+    max-height: 350px;
+}
+
+.status {
+    color: #4ade80;
+}
+
+@media(max-width:700px) {
+    .card-container {
+        grid-template-columns: 1fr;
+    }
+}
+</style>
+</head>
+
+<body>
+
+<div class="container">
+
+<h1>☀ Arduino LDR Monitoring System</h1>
+<p>Real-time Light Monitoring Dashboard</p>
+
+<button class="connect" id="connect">
+Connect Arduino
+</button>
+
+<button class="clear" id="clear">
+Clear History
+</button>
+
+<p id="connection">Not Connected</p>
+
+<div class="card-container">
+
+<div class="card">
+<h3>LDR VALUE</h3>
+<div class="value" id="ldr">0</div>
+</div>
+
+<div class="card">
+<h3>LIGHT CONDITION</h3>
+<div class="value" id="light">---</div>
+</div>
+
+<div class="card">
+<h3>LED STATUS</h3>
+<div class="value" id="led">---</div>
+</div>
+
+</div>
+
+<div class="panel">
+<h2>Live LDR Graph</h2>
+<canvas id="graph" width="900" height="300"></canvas>
+</div>
+
+<div class="panel">
+<h2>Reading Summary</h2>
+<p>Dark readings: <span id="dark">0</span></p>
+<p>Bright readings: <span id="bright">0</span></p>
+<p>LED ON readings: <span id="on">0</span></p>
+<p>Total readings: <span id="total">0</span></p>
+</div>
+
+<div class="panel">
+<h2>Previous Reading History</h2>
+
+<div class="history">
+<table>
+<thead>
+<tr>
+<th>Date & Time</th>
+<th>LDR Value</th>
+<th>Light</th>
+<th>LED</th>
+</tr>
+</thead>
+
+<tbody id="history"></tbody>
+</table>
+</div>
+</div>
+
+</div>
+
+<script>
+
+// Load previous readings from browser storage
+let readings = [];
+
+try {
+    readings = JSON.parse(
+        localStorage.getItem("ldrHistory") || "[]"
+    );
+} catch (error) {
+    readings = [];
+}
+
+let port;
+let reader;
+let readingActive = false;
+let buffer = "";
+
+// Calculate light condition
+function getLight(value) {
+    return value <= 400 ? "DARK" : "BRIGHT";
+}
+
+// Receive Arduino readings
+function processReading(line) {
+
+    let parts = line.trim().split(/[,\s]+/);
+
+    let value = Number(parts[0]);
+
+    if (!Number.isFinite(value) || value < 0 || value > 1023) {
+        return;
+    }
+
+    let light = parts[1] || getLight(value);
+    let led = parts[2] || "---";
+
+    light = light.toUpperCase();
+    led = led.toUpperCase();
+
+    if (light !== "DARK" && light !== "BRIGHT") {
+        light = getLight(value);
+    }
+
+    if (led !== "ON" && led !== "OFF") {
+        led = "---";
+    }
+
+    let record = {
+        date: new Date().toLocaleString(),
+        value: Math.round(value),
+        light: light,
+        led: led
+    };
+
+    readings.push(record);
+
+    // Keep maximum 5000 readings
+    if (readings.length > 5000) {
+        readings.shift();
+    }
+
+    // Save automatically
+    localStorage.setItem(
+        "ldrHistory",
+        JSON.stringify(readings)
+    );
+
+    updateWebsite();
+}
+
+// Update dashboard
+function updateWebsite() {
+
+    let latest = readings[readings.length - 1];
+
+    if (latest) {
+        document.getElementById("ldr").innerText =
+            latest.value;
+
+        document.getElementById("light").innerText =
+            latest.light;
+
+        document.getElementById("led").innerText =
+            latest.led;
+    }
+
+    document.getElementById("dark").innerText =
+        readings.filter(r => r.light === "DARK").length;
+
+    document.getElementById("bright").innerText =
+        readings.filter(r => r.light === "BRIGHT").length;
+
+    document.getElementById("on").innerText =
+        readings.filter(r => r.led === "ON").length;
+
+    document.getElementById("total").innerText =
+        readings.length;
+
+    let history = document.getElementById("history");
+
+    history.innerHTML = "";
+
+    readings.slice().reverse().forEach(r => {
+
+        let row = document.createElement("tr");
+
+        [r.date, r.value, r.light, r.led].forEach(value => {
+            let cell = document.createElement("td");
+            cell.textContent = value;
+            row.appendChild(cell);
+        });
+
+        history.appendChild(row);
+    });
+
+    drawGraph();
+}
+
+// Draw live graph
+function drawGraph() {
+
+    let canvas = document.getElementById("graph");
+    let ctx = canvas.getContext("2d");
+
+    let w = canvas.width;
+    let h = canvas.height;
+
+    ctx.clearRect(0, 0, w, h);
+
+    ctx.strokeStyle = "#394a60";
+
+    for (let i = 0; i <= 4; i++) {
+
+        let y = 15 + (h - 40) * i / 4;
+
+        ctx.beginPath();
+        ctx.moveTo(45, y);
+        ctx.lineTo(w - 10, y);
+        ctx.stroke();
+
+        ctx.fillStyle = "white";
+        ctx.font = "12px Arial";
+        ctx.fillText(
+            String(1023 - Math.round(1023 * i / 4)),
+            5, y + 4
+        );
+    }
+
+    let data = readings.slice(-60);
+
+    if (data.length === 0) {
+        ctx.fillStyle = "white";
+        ctx.fillText("Waiting for readings...", 350, 150);
+        return;
+    }
+
+    ctx.beginPath();
+    ctx.strokeStyle = "#55d7e8";
+    ctx.lineWidth = 3;
+
+    data.forEach((r, i) => {
+
+        let x = 45 + (w - 65) *
+            (data.length === 1 ? 0 : i / (data.length - 1));
+
+        let y = 15 + (h - 40) *
+            (1 - r.value / 1023);
+
+        if (i === 0) {
+            ctx.moveTo(x, y);
+        } else {
+            ctx.lineTo(x, y);
+        }
+    });
+
+    ctx.stroke();
+}
+
+// Connect Arduino
+document.getElementById("connect").onclick =
+async function () {
+
+    if (!("serial" in navigator)) {
+        alert("Please use Microsoft Edge or Chrome.");
+        return;
+    }
+
+    try {
+
+        port = await navigator.serial.requestPort();
+
+        await port.open({
+            baudRate: 9600
+        });
+
+        readingActive = true;
+
+        document.getElementById("connection").innerText =
+            "Arduino Connected";
+
+        readSerial();
+
+    } catch (error) {
+
+        document.getElementById("connection").innerText =
+            "Connection failed: " + error.message;
+
+    }
+};
+
+// Read serial data
+async function readSerial() {
+
+    const decoder = new TextDecoder();
+
+    try {
+
+        while (port && port.readable && readingActive) {
+
+            reader = port.readable.getReader();
+
+            try {
+
+                while (readingActive) {
+
+                    const { value, done } = await reader.read();
+
+                    if (done) break;
+
+                    if (value) {
+
+                        buffer += decoder.decode(
+                            value,
+                            { stream: true }
+                        );
+
+                        let lines = buffer.split(/\r?\n/);
+
+                        buffer = lines.pop();
+
+                        lines.forEach(processReading);
+                    }
+                }
+
+            } finally {
+                reader.releaseLock();
+                reader = null;
+            }
+        }
+
+    } catch (error) {
+
+        document.getElementById("connection").innerText =
+            "Serial error: " + error.message;
+    }
+}
+
+// Clear history
+document.getElementById("clear").onclick = function () {
+
+    if (confirm("Delete all previous readings?")) {
+
+        readings = [];
+
+        localStorage.removeItem("ldrHistory");
+
+        updateWebsite();
+    }
+};
+
+// Show old readings when website opens
+updateWebsite();
+
+</script>
+</body>
+</html>
